@@ -17,13 +17,10 @@ def extract_words_from_epub(epub_path, output_csv):
     # 合并所有章节的文字
     full_text = " ".join(texts)
 
-    # 提取单词（包含英文、西语字符）
+    # 提取单词（包含英文、西语字符，保留大小写）
     words = re.findall(r"[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]+", full_text)
 
-    # 统一为小写
-    words = [w.lower() for w in words]
-
-    # 统计词频
+    # 统计词频（区分大小写）
     counter = Counter(words)
 
     # 保存为 CSV 文件
@@ -34,6 +31,7 @@ def extract_words_from_epub(epub_path, output_csv):
             writer.writerow([word, freq])
 
     print(f"✅ 处理完成！结果已保存到 {output_csv}")
+
 
 if __name__ == "__main__":
     extract_words_from_epub("harry.epub", "word_frequency.csv")
