@@ -18,7 +18,32 @@ def spinner_task(stop_event, progress):
         time.sleep(0.1)
     sys.stdout.write("\r✅ 处理完成！          \n")
 
-def extract_words_with_sentences(epub_path, output_csv):
+# 读取已学单词（lingqs.csv 的第一列 term）
+def load_known_words(csv_path):
+    known_words = set()
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            word = row["term"].strip()
+            if word:
+                known_words.add(word.lower())  # 转小写
+    return known_words
+
+# 从 stopwords_es.txt 文件加载停用词
+def load_stopwords(path="stopwords_es.txt"):
+    stopwords = set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            word = line.strip().lower()
+            if word:
+                stopwords.add(word)
+    return stopwords
+
+def extract_words_with_sentences(epub_path, known_csv_path, stopwords_path, output_csv, fill_in_blank=True):
+    # 载入已学单词和停用词
+    known_words = load_known_words(known_csv_path)
+    stopwords = load_stopwords(stopwords_path)
+
     # 启动转圈线程
     stop_event = threading.Event()
     progress = [0.0]
@@ -45,33 +70,34 @@ def extract_words_with_sentences(epub_path, output_csv):
 
         # 遍历句子
         for idx, sentence in enumerate(sentences, 1):
-            # 清理换行符和多余空格
             clean_sentence = ' '.join(sentence.replace("\n", " ").replace("\r", " ").split())
-            # 去掉句子开头的破折号（英文/中文等）
-            clean_sentence = re.sub(r'^[\-\—\–\~\s]+', '', clean_sentence)
-            # 去掉 << >> 等特殊符号
-            clean_sentence = re.sub(r'[<>]+', '', clean_sentence)
-            # 去掉句子首尾各种引号（中文/英文单双引号）
-            clean_sentence = re.sub(r'^[“"\'‘]+|[”"\'’]+$', '', clean_sentence)
-            
-            # 提取单词（只保留字母和西语字符）
+            clean_sentence = re.sub(r'^[\-\—\–\~\s]+', '', clean_sentence)   # 去掉句子开头的破折号
+            clean_sentence = re.sub(r'[<>]+', '', clean_sentence)            # 去掉 << >>
+            clean_sentence = re.sub(r'^[“"\'‘]+|[”"\'’]+$', '', clean_sentence)  # 去掉首尾引号
+
             words = re.findall(r"[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]+", clean_sentence)
             for w in words:
+                lw = w.lower()
+                if lw in known_words or lw in stopwords:  # 跳过已学词 + 停用词
+                    continue
                 word_counter[w] += 1
                 if w not in word_sentence:
                     word_sentence[w] = clean_sentence
 
-            # 更新百分比
-            progress[0] = idx / total_sentences * 100
+            progress[0] = idx / total_sentences * 100  # 更新百分比
 
-        # 写入 CSV（Anki 填空格式）
+        # 写入 CSV（只包含未学过 + 非停用词）
         with open(output_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["word", "count", "example_sentence"])
             for word, freq in word_counter.most_common():
                 example = word_sentence[word]
-                # 把例句中第一个出现的单词变成 Anki 填空
-                example_anki = re.sub(r'\b{}\b'.format(re.escape(word)), r'{{c1::\g<0>}}', example, count=1)
+                if fill_in_blank:
+                    # 填空模式
+                    example_anki = re.sub(r'\b{}\b'.format(re.escape(word)), r'{{c1::\g<0>}}', example, count=1)
+                else:
+                    # 非填空模式，高亮单词
+                    example_anki = re.sub(r'\b{}\b'.format(re.escape(word)), r'<b>\g<0></b>', example, count=1)
                 writer.writerow([word, freq, example_anki])
 
     finally:
@@ -79,4 +105,11 @@ def extract_words_with_sentences(epub_path, output_csv):
         spinner_thread.join()
 
 if __name__ == "__main__":
-    extract_words_with_sentences("harry.epub", "word_with_sentences.csv")
+    # True → 生成填空题，False → 原句 + 高亮单词
+    extract_words_with_sentences(
+        "harry.epub",
+        "lingqs.csv",
+        "stopwords_es.txt",
+        "harry_output.csv",
+        fill_in_blank=False
+    )
