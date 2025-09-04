@@ -1,14 +1,18 @@
+import spacy
 from ebooklib import epub
 from bs4 import BeautifulSoup
 from collections import Counter
-import re
 import csv
 import sys
 import time
 import threading
 import itertools
+import re
 
-# 转圈 + 百分比显示
+# 加载西语 NLP 模型
+nlp = spacy.load("es_core_news_sm")
+
+# 转圈进度条
 def spinner_task(stop_event, progress):
     spinner = itertools.cycle(['|', '/', '-', '\\'])
     while not stop_event.is_set():
@@ -39,6 +43,30 @@ def load_stopwords(path="stopwords_es.txt"):
                 stopwords.add(word)
     return stopwords
 
+# 提取句子（每行拆分 + spaCy 分句 + 批量处理）
+def extract_sentences_from_epub(epub_path):
+    book = epub.read_epub(epub_path)
+    texts = []
+    for item in book.get_items():
+        if item.get_type() == 9:  # 文本类型 (XHTML)
+            soup = BeautifulSoup(item.get_body_content(), "html.parser")
+            texts.append(soup.get_text())
+
+    full_text = "\n".join(texts).strip()
+
+    # 按换行拆分为潜在句子
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+    potential_sentences = []
+
+    # 批量处理 spaCy 分句
+    for doc in nlp.pipe(lines, batch_size=50):
+        for sent in doc.sents:
+            s = sent.text.strip()
+            if s:
+                potential_sentences.append(s)
+
+    return potential_sentences
+
 def extract_minimal_sentences(epub_path, known_csv_path, stopwords_path, output_csv):
     known_words = load_known_words(known_csv_path)
     stopwords = load_stopwords(stopwords_path)
@@ -49,41 +77,27 @@ def extract_minimal_sentences(epub_path, known_csv_path, stopwords_path, output_
     spinner_thread.start()
 
     try:
-        # 读取 epub
-        book = epub.read_epub(epub_path)
-        texts = []
-        for item in book.get_items():
-            if item.get_type() == 9:  # 文本类型 (XHTML)
-                soup = BeautifulSoup(item.get_body_content(), "html.parser")
-                texts.append(soup.get_text())
-
-        full_text = " ".join(texts)
-        sentences = re.split(r'(?<=[.!?])\s+', full_text)
+        sentences = extract_sentences_from_epub(epub_path)
         total_sentences = len(sentences)
 
         word_counter = Counter()
         word_sentence_candidates = {}
 
-        # 统计单词频率 & 收集候选句子
-        for idx, sentence in enumerate(sentences, 1):
-            clean_sentence = ' '.join(sentence.replace("\n", " ").replace("\r", " ").split())
-            clean_sentence = re.sub(r'^[\-\—\–\~\s]+', '', clean_sentence)
-            clean_sentence = re.sub(r'[<>]+', '', clean_sentence)
-            clean_sentence = re.sub(r'^[“"\'‘]+|[”"\'’]+$', '', clean_sentence)
-
-            words = re.findall(r"[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]+", clean_sentence)
+        # 使用 nlp.pipe 批量处理单词统计
+        docs = list(nlp.pipe(sentences, batch_size=50))
+        for idx, doc in enumerate(docs, 1):
+            words = [token.text for token in doc if token.is_alpha]
             for w in words:
                 lw = w.lower()
                 if lw in known_words or lw in stopwords:
                     continue
                 word_counter[w] += 1
-                # 保存第一个候选句子
                 if w not in word_sentence_candidates:
-                    word_sentence_candidates[w] = clean_sentence
+                    word_sentence_candidates[w] = doc.text
 
             progress[0] = idx / total_sentences * 100
 
-        # 分配句子：从低频词开始
+        # 分配句子：低频优先
         word_sentence = {}
         used_sentences = set()
 
@@ -95,7 +109,7 @@ def extract_minimal_sentences(epub_path, known_csv_path, stopwords_path, output_
             else:
                 word_sentence[word] = ""  # 没有新句子 → 留空
 
-        # 最终只输出去重后的句子列表
+        # 输出 CSV
         with open(output_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["sentence", "words"])
@@ -103,17 +117,29 @@ def extract_minimal_sentences(epub_path, known_csv_path, stopwords_path, output_
                 words_in_sentence = [w for w, s in word_sentence.items() if s == sentence]
                 writer.writerow([sentence, ", ".join(words_in_sentence)])
 
-        # ---- 统计信息 ----
-        total_words = len(word_counter)
-        covered_words = sum(1 for s in word_sentence.values() if s)
+        # ----------------- 统计信息 -----------------
+        # 原书总词数
+        original_words = []
+        for doc in docs:
+            original_words.extend([token.text for token in doc if token.is_alpha])
+        original_total_words = len(original_words)
+
+        # 抽取句子总词数
+        selected_words = []
+        for sentence in used_sentences:
+            doc = nlp(sentence)
+            selected_words.extend([token.text for token in doc if token.is_alpha])
+        selected_total_words = len(selected_words)
+
+        # 压缩比率
+        compression_ratio = selected_total_words / original_total_words * 100 if original_total_words > 0 else 0
         unique_sentences = len(used_sentences)
-        avg_words_per_sentence = covered_words / unique_sentences if unique_sentences > 0 else 0
 
         print("\n📊 统计结果：")
-        print(f"总单词数: {total_words}")
-        print(f"覆盖单词数: {covered_words}")
+        print(f"原书总词数: {original_total_words}")
+        print(f"抽取句子总词数: {selected_total_words}")
+        print(f"压缩比率: {compression_ratio:.2f}%")
         print(f"最终保留句子数: {unique_sentences}")
-        print(f"平均每句覆盖单词数: {avg_words_per_sentence:.2f}")
 
     finally:
         stop_event.set()
@@ -121,8 +147,8 @@ def extract_minimal_sentences(epub_path, known_csv_path, stopwords_path, output_
 
 if __name__ == "__main__":
     extract_minimal_sentences(
-        "atomic.epub",
-        "lingqs.csv",
-        "stopwords_es.txt",
-        "atomic.csv"
+        "your_book.epub",     # 输入 EPUB
+        "lingqs.csv",         # 已学单词列表
+        "stopwords_es.txt",   # 停用词列表
+        "minimal_sentences.csv"  # 输出 CSV
     )
