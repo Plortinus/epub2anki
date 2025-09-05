@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epub2anki"
+version = "1.0.0"
+description = "Extract words from EPUB files for Anki flashcards"
+readme = "readme.md"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/epub2anki"
+Repository = "https://github.com/yourusername/epub2anki"
+"Bug Tracker" = "https://github.com/yourusername/epub2anki/issues"
+
+[project.scripts]
+epub2anki-extract = "extract_words:main"
+epub2anki-no-known = "extract_words_without_knowns:main" 
+epub2anki-sentences = "extract_words_with_sentences:main"
+
+[tool.setuptools]
+py-modules = ["extract_words", "extract_words_without_knowns", "extract_words_with_sentences"]

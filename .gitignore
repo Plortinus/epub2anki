@@ -1,3 +1,4 @@
 *.epub
 *.csv
-!lingqs.csv
+!knowns.csv
+!anki_words_list.csv
